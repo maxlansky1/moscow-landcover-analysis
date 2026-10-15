@@ -7,11 +7,15 @@ from __future__ import annotations
 
 from typing import Optional
 
-SR_SCALE_FACTOR = 0.0000275
-SR_OFFSET = -0.2
+from .config import AnalysisConfig
+
+# Значения по умолчанию берутся из единого источника — AnalysisConfig.
+_SR = AnalysisConfig()
+SR_SCALE_FACTOR = _SR.sr_scale_factor
+SR_OFFSET = _SR.sr_offset
 
 # Соответствие «сырых» каналов Landsat общим именам.
-COMMON_BANDS = ["blue", "green", "red", "nir", "swir1", "swir2"]
+COMMON_BANDS = list(_SR.spectral_bands)
 L57_RAW_BANDS = ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B7"]
 L89_RAW_BANDS = ["SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7"]
 L57_SPACECRAFT = ["LANDSAT_5", "LANDSAT_7"]

@@ -1,12 +1,10 @@
-"""Диагностика качества данных (бывшие F1/F2).
+"""F2: качество летних композитов и обучающих точек.
 
-F1 — доступность снимков Landsat за 2000–2026 по обеим территориям.
-F2 — качество летних композитов и обучающих точек (единый проход по всем
-годам, расширенные метрики — только для целевых лет).
+Бывший блок F2 из `diagnostics.py`. Пороги и количество точек берутся из
+`DiagConfig`, параметры GEE — из `AnalysisConfig`.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import time
 from pathlib import Path
@@ -16,12 +14,13 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-from .boundaries import load_boundaries
-from .composite import create_composite
-from .config import AnalysisConfig, Config
-from .landsat import build_collection
-from .logging import run_timestamp
-from .pipeline import json_safe
+from .._plotting import finalize_figure, have_matplotlib
+from ..boundaries import load_boundaries
+from ..composite import create_composite
+from ..config import TERRITORIES, AnalysisConfig, Config, DiagConfig
+from ..landsat import build_collection
+from ..logging import run_timestamp
+from ..pipeline import json_safe
 
 try:
     from scipy import stats as scipy_stats
@@ -31,261 +30,8 @@ except ImportError:  # pragma: no cover - scipy опционален
     SCIPY_AVAILABLE = False
 
 
-SAMPLE_POINTS_PER_CLASS = 300
-VALIDATION_SEED = 42
-ANOMALY_THRESHOLD = 0.1
-TERRITORIES = ("Historical", "Greater")
-
-
-def _have_matplotlib() -> bool:
-    return importlib.util.find_spec("matplotlib") is not None
-
-
-def _finalize(fig, out_path: Optional[Path] = None, verbose: bool = True) -> None:
-    """Строит tight_layout, сохраняет и закрывает фигуру (если есть mpl)."""
-    import matplotlib.pyplot as plt
-
-    fig.tight_layout()
-    if out_path is not None:
-        out_path = Path(out_path)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out_path, dpi=150, bbox_inches="tight")
-        if verbose:
-            logger.info(f"График сохранён: {out_path}")
-    plt.close(fig)
-
-
-# =====================================================================
-# F1: доступность снимков
-# =====================================================================
-def get_all_scenes_metadata(boundary, year_range, season_months=(6, 7, 8),
-                            analysis: Optional[AnalysisConfig] = None) -> list:
-    """Метаданные всех летних снимков в границах за один запрос к GEE."""
-    import ee
-
-    analysis = analysis or AnalysisConfig()
-    sat_ids = list(analysis.satellites_early) + list(analysis.satellites_late)
-    col = build_collection(sat_ids)
-
-    start = f"{year_range[0]}-06-01"
-    end = f"{year_range[-1]}-09-01"
-    col = col.filterDate(start, end).filterBounds(boundary)
-
-    def make_feature(img):
-        date = ee.Date(img.get("DATE_ACQUIRED"))
-        return ee.Feature(None, {
-            "year": date.get("year"),
-            "month": date.get("month"),
-            "cloud": img.get("CLOUD_COVER"),
-            "sensor": img.get("SPACECRAFT_ID"),
-        })
-
-    features = col.map(make_feature)
-    features = features.filter(ee.Filter.inList("month", list(season_months)))
-
-    info = features.getInfo()
-    return [f["properties"] for f in info.get("features", [])]
-
-
-def build_scene_summary(metadata_list: list) -> pd.DataFrame:
-    """Агрегирует метаданные снимков по годам."""
-    columns = ["year", "n_scenes", "median_cloud", "min_cloud",
-               "max_cloud", "sensors"]
-    if not metadata_list:
-        return pd.DataFrame(columns=columns)
-
-    df = pd.DataFrame(metadata_list)
-    df["year"] = df["year"].astype(int)
-    df["cloud"] = df["cloud"].astype(float)
-
-    def agg_sensors(series):
-        return ",".join(sorted(set(series.dropna().astype(str))))
-
-    return df.groupby("year").agg(
-        n_scenes=("cloud", "count"),
-        median_cloud=("cloud", "median"),
-        min_cloud=("cloud", "min"),
-        max_cloud=("cloud", "max"),
-        sensors=("sensor", agg_sensors),
-    ).reset_index()
-
-
-def availability(cfg: Config, years=None, verbose: bool = True,
-                 plots: bool = True) -> dict:
-    """F1: проверяет доступность снимков по годам для обеих территорий.
-
-    Возвращает {territory: DataFrame} и сохраняет diagnostics_f1_scenes.json.
-    """
-    analysis = cfg.analysis
-    paths = cfg.paths
-    min_images = analysis.min_images_for_composite
-    all_years = list(years) if years is not None else list(
-        range(analysis.historical_start, analysis.historical_end + 1)
-    )
-
-    logger.info("=" * 70)
-    logger.info("F1: ДОСТУПНОСТЬ СНИМКОВ 2000-2026")
-    logger.info("=" * 70)
-
-    boundaries, _ = load_boundaries(paths)
-
-    f1_data: dict = {}
-    for territory_name in TERRITORIES:
-        logger.info(f"[F1] Собираю метаданные снимков: {territory_name}...")
-        t0 = time.time()
-
-        metadata = get_all_scenes_metadata(boundaries[territory_name], all_years,
-                                           analysis=analysis)
-        summary = build_scene_summary(metadata)
-
-        summary = pd.DataFrame({"year": all_years}).merge(
-            summary, on="year", how="left"
-        )
-        summary["n_scenes"] = summary["n_scenes"].fillna(0).astype(int)
-        summary["sensors"] = summary["sensors"].fillna("")
-        summary["needs_fallback"] = summary["n_scenes"] < min_images
-
-        f1_data[territory_name] = summary
-        logger.info(f"[F1] {territory_name}: собрано за {time.time()-t0:.1f} с, "
-                    f"всего снимков за период: {summary['n_scenes'].sum()}")
-
-    _log_availability_tables(f1_data, analysis, min_images, verbose)
-    _log_fallback_analysis(f1_data, analysis, min_images, verbose)
-
-    if plots and _have_matplotlib():
-        path = paths["INTERMEDIATE"] / "diagnostics_f1_scenes.png"
-        _plot_availability(f1_data, min_images, path, verbose)
-    elif plots:
-        logger.warning("matplotlib недоступен — графики F1 пропущены.")
-
-    f1_json = {
-        "run_timestamp": run_timestamp(),
-        "years": all_years,
-        "min_images_for_composite": min_images,
-        "data": {t: json_safe(df.to_dict(orient="records"))
-                 for t, df in f1_data.items()},
-    }
-    f1_file = paths["INTERMEDIATE"] / "diagnostics_f1_scenes.json"
-    f1_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(f1_file, "w", encoding="utf-8") as f:
-        json.dump(f1_json, f, indent=2, ensure_ascii=False)
-
-    logger.success(f"Результаты F1 сохранены: {f1_file.name}")
-    logger.success("✅ F1 ЗАВЕРШЁН: доступность снимков проверена")
-    return f1_data
-
-
-def _log_availability_tables(f1_data, analysis, min_images, verbose) -> None:
-    if not verbose:
-        return
-    logger.info("-" * 70)
-    logger.info("СВОДКА ПО ГОДАМ (все 2000-2026)")
-    for territory_name, df in f1_data.items():
-        logger.info(f"\n[{territory_name}]")
-        logger.info(f"  {'Год':<6}{'Снимков':>10}{'Медиана':>10}{'Мин':>8}"
-                    f"{'Макс':>8}  {'Fallback':<10}{'Сенсоры'}")
-        logger.info(f"  {'-' * 80}")
-        for _, row in df.iterrows():
-            med, mn, mx = row["median_cloud"], row["min_cloud"], row["max_cloud"]
-            fallback = "⚠️ ДА" if row["needs_fallback"] else "нет"
-            marker = ""
-            if int(row["n_scenes"]) == 0:
-                marker = " ❌"
-            elif row["needs_fallback"]:
-                marker = " ⚠️"
-            logger.info(
-                f"  {int(row['year']):<6}{int(row['n_scenes']):>10}"
-                f"{(f'{med:.1f}' if pd.notna(med) else '—'):>10}"
-                f"{(f'{mn:.1f}' if pd.notna(mn) else '—'):>8}"
-                f"{(f'{mx:.1f}' if pd.notna(mx) else '—'):>8}  "
-                f"{fallback:<10}{row['sensors']}{marker}"
-            )
-
-
-def _log_fallback_analysis(f1_data, analysis, min_images, verbose) -> None:
-    if not verbose:
-        return
-    logger.info("-" * 70)
-    logger.info("АНАЛИЗ FALLBACK")
-    for territory_name, df in f1_data.items():
-        problem_years = df[df["needs_fallback"]]["year"].astype(int).tolist()
-        zero_years = df[df["n_scenes"] == 0]["year"].astype(int).tolist()
-        if not problem_years:
-            logger.success(f"[{territory_name}] ✅ Все годы имеют "
-                           f"≥{min_images} снимков")
-        else:
-            logger.warning(f"[{territory_name}] ⚠️  Годы с недостатком снимков "
-                           f"(<{min_images}): {problem_years}")
-            if zero_years:
-                logger.error(f"[{territory_name}] ❌ Годы БЕЗ снимков совсем: "
-                             f"{zero_years}")
-
-    logger.info("-" * 70)
-    logger.info("ПРОВЕРКА ЦЕЛЕВЫХ ГОДОВ")
-    for territory_name, df in f1_data.items():
-        target_years = (analysis.historical_years if territory_name == "Historical"
-                        else analysis.greater_years)
-        logger.info(f"\n[{territory_name}] целевые годы: {target_years}")
-        for year in target_years:
-            row = df[df["year"] == year]
-            if row.empty:
-                logger.error(f"  {year}: ❌ нет данных")
-                continue
-            row = row.iloc[0]
-            n = int(row["n_scenes"])
-            med = row["median_cloud"]
-            med_str = f"{med:.1f}%" if pd.notna(med) else "—"
-            if n >= min_images:
-                logger.success(f"  {year}: ✅ {n} снимков, медиана облачности "
-                               f"{med_str}")
-            elif n > 0:
-                logger.warning(f"  {year}: ⚠️  только {n} снимков "
-                               f"(нужно {min_images}), будет fallback")
-            else:
-                logger.error(f"  {year}: ❌ нет снимков")
-
-
-def _plot_availability(f1_data, min_images, out_path, verbose) -> None:
-    import matplotlib.pyplot as plt
-
-    fig, axes = plt.subplots(2, 1, figsize=(15, 9), sharex=True)
-
-    ax1 = axes[0]
-    for territory_name, df in f1_data.items():
-        color = "steelblue" if territory_name == "Historical" else "darkorange"
-        ax1.bar(df["year"] + (0.2 if territory_name == "Greater" else -0.2),
-                df["n_scenes"], width=0.4, alpha=0.75,
-                label=territory_name, color=color)
-    ax1.axhline(y=min_images, color="red", linestyle="--", alpha=0.7,
-                label=f"Минимум ({min_images})")
-    ax1.set_ylabel("Количество снимков", fontsize=12)
-    ax1.set_title("Доступность снимков Landsat за лето (2000–2026)", fontsize=13)
-    ax1.legend(loc="upper right")
-    ax1.grid(True, alpha=0.3)
-
-    ax2 = axes[1]
-    for territory_name, df in f1_data.items():
-        color = "steelblue" if territory_name == "Historical" else "darkorange"
-        valid_df = df.dropna(subset=["median_cloud"])
-        ax2.plot(valid_df["year"], valid_df["median_cloud"], marker="o",
-                 linewidth=2, markersize=5, label=territory_name, color=color)
-    ax2.axhline(y=20, color="red", linestyle="--", alpha=0.7,
-                label="20% (ориентир)")
-    ax2.set_xlabel("Год", fontsize=12)
-    ax2.set_ylabel("Медиана облачности (%)", fontsize=12)
-    ax2.set_title("Медиана облачности летних снимков", fontsize=13)
-    ax2.legend(loc="upper right")
-    ax2.grid(True, alpha=0.3)
-    ax2.set_xticks(range(2000, 2027, 2))
-    ax2.tick_params(axis="x", rotation=45)
-
-    _finalize(fig, out_path, verbose)
-
-
-# =====================================================================
-# F2: диагностика композитов и обучающих точек
-# =====================================================================
-def subsample_points_tiered(points, n_per_class: int, seed: int = VALIDATION_SEED,
+def subsample_points_tiered(points, n_per_class: int,
+                            seed: int = DiagConfig().validation_seed,
                             n_classes: int = 4):
     """Берёт n_per_class точек из каждого класса, рандомизированно."""
     import ee
@@ -399,10 +145,10 @@ def compute_composite_percentiles(composite, boundary,
         return None
 
 
-def compute_training_validation(composite, validation_points,
-                                boundary_name: str = "",
-                                analysis: Optional[AnalysisConfig] = None,
-                                sample_points_per_class: int = SAMPLE_POINTS_PER_CLASS):
+def compute_training_validation(
+        composite, validation_points, boundary_name: str = "",
+        analysis: Optional[AnalysisConfig] = None,
+        sample_points_per_class: int = DiagConfig().sample_points_per_class):
     """Доля обучающих точек на валидных пикселях + per-class метрики NDVI.
 
     sampleRegions принимает `projection`, а НЕ `crs`.
@@ -467,13 +213,14 @@ def run_diagnostics(cfg: Config, availability_data=None, verbose: bool = True,
                     plots: bool = True, training_points_map=None) -> dict:
     """F2: единый проход по всем годам × 2 территориям.
 
-    Сохраняет diagnostics_f2.json и возвращает словарь с df_f2/трендами.
+    Сохраняет diagnostics/f2_composite.json и возвращает словарь с df_f2/трендами.
     """
     import ee
 
-    from . import points as points_module
+    from .. import points as points_module
 
     analysis = cfg.analysis
+    diag = cfg.diag
     paths = cfg.paths
     all_years = list(range(analysis.historical_start, analysis.historical_end + 1))
     target_years_by_territory = {
@@ -503,8 +250,8 @@ def run_diagnostics(cfg: Config, availability_data=None, verbose: bool = True,
 
     validation_points = {
         name: subsample_points_tiered(
-            training_points_map[name], SAMPLE_POINTS_PER_CLASS,
-            VALIDATION_SEED, analysis.n_classes,
+            training_points_map[name], diag.sample_points_per_class,
+            diag.validation_seed, analysis.n_classes,
         )
         for name in TERRITORIES
         if training_points_map.get(name) is not None
@@ -594,11 +341,11 @@ def run_diagnostics(cfg: Config, availability_data=None, verbose: bool = True,
         "run_timestamp": run_timestamp(),
         "years": all_years,
         "target_years": {k: sorted(v) for k, v in target_years_by_territory.items()},
-        "sample_points_per_class": SAMPLE_POINTS_PER_CLASS,
+        "sample_points_per_class": diag.sample_points_per_class,
         "failed": f2_failed,
         "data": json_safe(f2_data),
     }
-    f2_file = paths["INTERMEDIATE"] / "diagnostics_f2.json"
+    f2_file = paths["DIAG"] / "f2_composite.json"
     f2_file.parent.mkdir(parents=True, exist_ok=True)
     with open(f2_file, "w", encoding="utf-8") as f:
         json.dump(f2_json, f, indent=2, ensure_ascii=False)
@@ -608,30 +355,30 @@ def run_diagnostics(cfg: Config, availability_data=None, verbose: bool = True,
     if not df_f2.empty:
         df_f2 = df_f2.sort_values(["territory", "year"]).reset_index(drop=True)
 
-    _log_spectral_table(df_f2, analysis, verbose)
-    _log_ndvi_distribution(df_f2, analysis, verbose)
-    trend_results = _compute_trends(df_f2, verbose)
-    _log_training_validity(df_f2, analysis, verbose)
+    _log_spectral_table(df_f2, analysis, diag, verbose)
+    _log_ndvi_distribution(df_f2, analysis, diag, verbose)
+    trend_results = _compute_trends(df_f2, diag, verbose)
+    _log_training_validity(df_f2, analysis, diag, verbose)
 
-    if plots and _have_matplotlib() and not df_f2.empty:
-        _plot_ndvi_timeseries(df_f2, cfg.map.plot_style,
-                              paths["INTERMEDIATE"] / "diagnostics_f2_ndvi.png",
+    if plots and have_matplotlib() and not df_f2.empty:
+        _plot_ndvi_timeseries(df_f2, cfg.map, cfg,
+                              paths["PLOTS"] / "f2_ndvi_timeseries.png",
                               verbose)
-        _plot_ndvi_distribution(df_f2, cfg.map.plot_style,
-                                paths["INTERMEDIATE"] / "diagnostics_f2_dist.png",
+        _plot_ndvi_distribution(df_f2, cfg.map, cfg,
+                                paths["PLOTS"] / "f2_ndvi_distribution.png",
                                 verbose)
-        _plot_trends(df_f2, trend_results, cfg.map.plot_style,
-                     paths["INTERMEDIATE"] / "diagnostics_f2_trends.png", verbose)
+        _plot_trends(df_f2, trend_results, cfg.map, cfg,
+                     paths["PLOTS"] / "f2_ndvi_trends.png", verbose)
     elif plots:
         logger.warning("matplotlib недоступен — графики F2 пропущены.")
 
-    issues = _log_verdict(df_f2, analysis, verbose)
+    issues = _log_verdict(df_f2, analysis, diag, verbose)
     logger.success("✅ F2 ЗАВЕРШЁН")
     return {"df_f2": df_f2, "trend_results": trend_results,
             "failed": f2_failed, "issues": issues, "elapsed_min": elapsed_min}
 
 
-def _log_spectral_table(df_f2, analysis, verbose) -> None:
+def _log_spectral_table(df_f2, analysis, diag, verbose) -> None:
     if not verbose or df_f2.empty:
         return
     logger.info("=" * 70)
@@ -653,11 +400,11 @@ def _log_spectral_table(df_f2, analysis, verbose) -> None:
             cloud = (row["cloud_residue_pct"]
                      if pd.notna(row["cloud_residue_pct"]) else 0)
             flags = []
-            if cov < 90:
+            if cov < diag.low_coverage_pct:
                 flags.append("cov")
-            if cloud > 1.0:
+            if cloud > diag.high_cloud_pct:
                 flags.append("cloud")
-            if ndvi_m < 0.3 or ndvi_m > 0.8:
+            if ndvi_m < diag.ndvi_min or ndvi_m > diag.ndvi_max:
                 flags.append("NDVI")
             flag_str = ("⚠ " + " ".join(flags)) if flags else ""
             target_marker = " *" if row["is_target"] else "  "
@@ -667,7 +414,7 @@ def _log_spectral_table(df_f2, analysis, verbose) -> None:
     logger.info("\n  * — целевой год (полная диагностика)")
 
 
-def _log_ndvi_distribution(df_f2, analysis, verbose) -> None:
+def _log_ndvi_distribution(df_f2, analysis, diag, verbose) -> None:
     if not verbose or df_f2.empty:
         return
     logger.info("=" * 70)
@@ -691,11 +438,11 @@ def _log_ndvi_distribution(df_f2, analysis, verbose) -> None:
                 continue
             if bimod is None or pd.isna(bimod):
                 interp = "—"
-            elif abs(bimod) < 0.05:
+            elif abs(bimod) < diag.ndvi_bimod_flat:
                 interp = "плоское"
-            elif bimod > 0.10:
+            elif bimod > diag.ndvi_bimod_bimodal:
                 interp = "двугорбое (норма)"
-            elif bimod > 0.05:
+            elif bimod > diag.ndvi_bimod_flat:
                 interp = "слабо двугорбое"
             else:
                 interp = "скошено"
@@ -703,7 +450,7 @@ def _log_ndvi_distribution(df_f2, analysis, verbose) -> None:
                         f"{p90:>8.3f}{bimod:>10.3f}  {interp}")
 
 
-def _compute_trends(df_f2, verbose) -> dict:
+def _compute_trends(df_f2, diag, verbose) -> dict:
     if verbose and not df_f2.empty:
         logger.info("=" * 70)
         logger.info("ТАБЛИЦА 3: ТРЕНДЫ И АНОМАЛИИ (все годы)")
@@ -716,7 +463,7 @@ def _compute_trends(df_f2, verbose) -> dict:
     for territory_name in TERRITORIES:
         subset = df_f2[df_f2["territory"] == territory_name].sort_values("year")
         subset = subset.dropna(subset=["NDVI_mean"])
-        if len(subset) < 3:
+        if len(subset) < diag.trend_min_points:
             logger.warning(f"[{territory_name}] Недостаточно данных для тренда")
             continue
 
@@ -735,7 +482,7 @@ def _compute_trends(df_f2, verbose) -> dict:
         else:
             r, p_value = np.nan, np.nan
 
-        anomaly_mask = np.abs(residuals) > ANOMALY_THRESHOLD
+        anomaly_mask = np.abs(residuals) > diag.anomaly_threshold
         anomaly_years = subset[anomaly_mask]["year"].astype(int).tolist()
 
         trend_results[territory_name] = {
@@ -761,20 +508,20 @@ def _compute_trends(df_f2, verbose) -> dict:
             else:
                 logger.info("  Тренд слабый (|slope| < 0.001)")
             if anomaly_years:
-                logger.warning(f"  Аномалии (|residual| > {ANOMALY_THRESHOLD}): "
+                logger.warning(f"  Аномалии (|residual| > {diag.anomaly_threshold}): "
                                f"{anomaly_years}")
             else:
                 logger.success("  ✅ Аномалий нет")
     return trend_results
 
 
-def _log_training_validity(df_f2, analysis, verbose) -> None:
+def _log_training_validity(df_f2, analysis, diag, verbose) -> None:
     if not verbose or df_f2.empty:
         return
     logger.info("=" * 70)
     logger.info("ТАБЛИЦА 4: ВАЛИДНОСТЬ ОБУЧАЮЩИХ ТОЧЕК (только целевые годы)")
     logger.info("=" * 70)
-    logger.info(f"Из {SAMPLE_POINTS_PER_CLASS} запрошенных точек/класс — "
+    logger.info(f"Из {diag.sample_points_per_class} запрошенных точек/класс — "
                 f"сколько попало на валидные пиксели.")
     for territory_name in TERRITORIES:
         logger.info(f"\n[{territory_name}]")
@@ -802,16 +549,20 @@ def _log_training_validity(df_f2, analysis, verbose) -> None:
                             f"{ndvi_m_str}{ndvi_s_str}")
             sep = val.get("separability")
             if sep is not None:
-                sep_marker = "✅" if sep > 0.15 else "⚠️" if sep > 0.05 else "❌"
+                sep_marker = ("✅" if sep > diag.separability_good
+                              else "⚠️" if sep > diag.separability_warn else "❌")
                 logger.info(f"    Separability (Dense − Sparse): {sep:+.3f} "
                             f"{sep_marker}")
 
 
-def _plot_ndvi_timeseries(df_f2, plot_style, out_path, verbose) -> None:
+def _plot_ndvi_timeseries(df_f2, map_cfg, cfg: Config, out_path, verbose) -> None:
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 4.5), sharey=True)
+    plot_style = map_cfg.plot_style
+    diag = cfg.diag
+    fig, axes = plt.subplots(1, 2, figsize=map_cfg.map_export["figsize_pair"],
+                             sharey=True)
     for ax, territory_name in zip(axes, TERRITORIES):
         subset = df_f2[df_f2["territory"] == territory_name].sort_values("year")
         color = (plot_style["historical_color"] if territory_name == "Historical"
@@ -822,8 +573,9 @@ def _plot_ndvi_timeseries(df_f2, plot_style, out_path, verbose) -> None:
             if pd.isna(row["coverage_pct"]):
                 continue
             cov = row["coverage_pct"]
-            m_color = (plot_style["ok_marker"] if cov >= 95
-                       else plot_style["warn_marker"] if cov >= 90
+            m_color = (plot_style["ok_marker"] if cov >= diag.coverage_ok_pct
+                       else plot_style["warn_marker"]
+                       if cov >= diag.low_coverage_pct
                        else plot_style["error_marker"])
             size = 110 if row["is_target"] else 60
             edge = "black" if row["is_target"] else "none"
@@ -847,23 +599,25 @@ def _plot_ndvi_timeseries(df_f2, plot_style, out_path, verbose) -> None:
 
         legend_elems = [
             Line2D([0], [0], marker="o", color="w", markerfacecolor="green",
-                   markersize=8, label="coverage ≥95%"),
+                   markersize=8, label=f"coverage ≥{diag.coverage_ok_pct:g}%"),
             Line2D([0], [0], marker="o", color="w", markerfacecolor="orange",
-                   markersize=8, label="coverage 90–95%"),
+                   markersize=8,
+                   label=f"coverage {diag.low_coverage_pct:g}–{diag.coverage_ok_pct:g}%"),
             Line2D([0], [0], marker="o", color="w", markerfacecolor="red",
-                   markersize=8, label="coverage <90%"),
+                   markersize=8, label=f"coverage <{diag.low_coverage_pct:g}%"),
         ]
         ax.legend(handles=legend_elems, loc="lower left", fontsize=8)
 
     fig.suptitle("NDVI mean по годам (крупные маркеры = целевые годы)",
                  fontsize=13, y=1.02)
-    _finalize(fig, out_path, verbose)
+    finalize_figure(fig, out_path, verbose, map_cfg.map_export["dpi"])
 
 
-def _plot_ndvi_distribution(df_f2, plot_style, out_path, verbose) -> None:
+def _plot_ndvi_distribution(df_f2, map_cfg, cfg: Config, out_path, verbose) -> None:
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 4.5))
+    plot_style = map_cfg.plot_style
+    fig, axes = plt.subplots(1, 2, figsize=map_cfg.map_export["figsize_pair"])
     for ax, territory_name in zip(axes, TERRITORIES):
         subset = df_f2[
             (df_f2["territory"] == territory_name)
@@ -894,13 +648,16 @@ def _plot_ndvi_distribution(df_f2, plot_style, out_path, verbose) -> None:
         ax.set_ylim(0, 1)
         ax.grid(True, alpha=plot_style["grid_alpha"])
     fig.suptitle("Распределение NDVI в целевые годы", fontsize=13, y=1.02)
-    _finalize(fig, out_path, verbose)
+    finalize_figure(fig, out_path, verbose, map_cfg.map_export["dpi"])
 
 
-def _plot_trends(df_f2, trend_results, plot_style, out_path, verbose) -> None:
+def _plot_trends(df_f2, trend_results, map_cfg, cfg: Config, out_path, verbose) -> None:
     import matplotlib.pyplot as plt
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 8), sharex="col")
+    plot_style = map_cfg.plot_style
+    threshold = cfg.diag.anomaly_threshold
+    fig, axes = plt.subplots(2, 2, figsize=map_cfg.map_export["figsize_grid"],
+                             sharex="col")
     for col, territory_name in enumerate(TERRITORIES):
         if territory_name not in trend_results:
             continue
@@ -937,22 +694,22 @@ def _plot_trends(df_f2, trend_results, plot_style, out_path, verbose) -> None:
         ax.legend(loc="lower left", fontsize=8)
 
         ax = axes[1, col]
-        colors = [plot_style["anomaly_marker"] if abs(r) > ANOMALY_THRESHOLD
+        colors = [plot_style["anomaly_marker"] if abs(r) > threshold
                   else color for r in residuals]
         ax.bar(years, residuals, color=colors, alpha=0.75, width=0.7)
         ax.axhline(y=0, color="black", linewidth=0.8)
-        ax.axhline(y=ANOMALY_THRESHOLD, color="red", linestyle=":", alpha=0.5)
-        ax.axhline(y=-ANOMALY_THRESHOLD, color="red", linestyle=":", alpha=0.5)
+        ax.axhline(y=threshold, color="red", linestyle=":", alpha=0.5)
+        ax.axhline(y=-threshold, color="red", linestyle=":", alpha=0.5)
         ax.set_title(f"{territory_name}: residuals", fontsize=12)
         ax.set_xlabel("Год")
         ax.set_ylabel("Residual")
         ax.grid(True, alpha=plot_style["grid_alpha"])
-    fig.suptitle("Тренды NDVI и аномалии (красным = |residual| > 0.1)",
+    fig.suptitle(f"Тренды NDVI и аномалии (красным = |residual| > {threshold})",
                  fontsize=13, y=1.00)
-    _finalize(fig, out_path, verbose)
+    finalize_figure(fig, out_path, verbose, map_cfg.map_export["dpi"])
 
 
-def _log_verdict(df_f2, analysis, verbose) -> list:
+def _log_verdict(df_f2, analysis, diag, verbose) -> list:
     if df_f2.empty:
         return []
     logger.info("=" * 70)
@@ -962,32 +719,38 @@ def _log_verdict(df_f2, analysis, verbose) -> list:
 
     for territory_name in TERRITORIES:
         subset = df_f2[df_f2["territory"] == territory_name]
-        low_cov = subset[subset["coverage_pct"] < 90]
+        low_cov = subset[subset["coverage_pct"] < diag.low_coverage_pct]
         if not low_cov.empty:
             years = low_cov["year"].astype(int).tolist()
-            logger.warning(f"[{territory_name}] coverage <90%: {years}")
+            logger.warning(f"[{territory_name}] coverage "
+                           f"<{diag.low_coverage_pct:g}%: {years}")
             issues.append(f"{territory_name}: низкое покрытие {years}")
         else:
-            logger.success(f"[{territory_name}] ✅ coverage ≥90% во все годы")
+            logger.success(f"[{territory_name}] ✅ coverage "
+                           f"≥{diag.low_coverage_pct:g}% во все годы")
 
     for territory_name in TERRITORIES:
         subset = df_f2[df_f2["territory"] == territory_name]
-        high_cloud = subset[subset["cloud_residue_pct"] > 1.0]
+        high_cloud = subset[subset["cloud_residue_pct"] > diag.high_cloud_pct]
         if not high_cloud.empty:
             years = high_cloud["year"].astype(int).tolist()
-            logger.warning(f"[{territory_name}] cloud_residue >1%: {years}")
+            logger.warning(f"[{territory_name}] cloud_residue "
+                           f">{diag.high_cloud_pct:g}%: {years}")
             issues.append(f"{territory_name}: остатки облаков {years}")
         else:
-            logger.success(f"[{territory_name}] ✅ cloud_residue ≤1% во все годы")
+            logger.success(f"[{territory_name}] ✅ cloud_residue "
+                           f"≤{diag.high_cloud_pct:g}% во все годы")
 
     for territory_name in TERRITORIES:
         subset = df_f2[df_f2["territory"] == territory_name]
-        unusual = subset[(subset["NDVI_mean"] < 0.3) | (subset["NDVI_mean"] > 0.8)]
+        unusual = subset[(subset["NDVI_mean"] < diag.ndvi_min)
+                         | (subset["NDVI_mean"] > diag.ndvi_max)]
         if not unusual.empty:
             years = unusual["year"].astype(int).tolist()
             logger.warning(f"[{territory_name}] необычный NDVI: {years}")
         else:
-            logger.success(f"[{territory_name}] ✅ NDVI_mean в 0.3–0.8")
+            logger.success(f"[{territory_name}] ✅ NDVI_mean в "
+                           f"{diag.ndvi_min:g}–{diag.ndvi_max:g}")
 
     logger.info("Валидность обучающих точек (целевые годы):")
     for territory_name in TERRITORIES:
@@ -1001,10 +764,10 @@ def _log_verdict(df_f2, analysis, verbose) -> list:
                 min_val_year = int(row["year"])
         if min_val_year is None:
             continue
-        if min_val_pct >= 70:
+        if min_val_pct >= diag.min_valid_points_pct:
             logger.success(f"[{territory_name}] ✅ минимум валидных точек: "
                            f"{min_val_pct:.0f}% ({min_val_year})")
-        elif min_val_pct >= 50:
+        elif min_val_pct >= diag.warn_valid_points_pct:
             logger.warning(f"[{territory_name}] ⚠️  минимум валидных точек: "
                            f"{min_val_pct:.0f}% ({min_val_year})")
             issues.append(f"{territory_name}: мало валидных точек в {min_val_year}")

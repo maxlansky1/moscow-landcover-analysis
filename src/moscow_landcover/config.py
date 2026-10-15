@@ -20,6 +20,9 @@ except ImportError:  # pragma: no cover - PyYAML объявлен в завис�
 DEFAULT_PROJECT_FOLDER = "Moscow_LandCover_Analysis"
 COLAB_MOUNT_POINT = "/content/drive"
 
+# Территории анализа (порядок фиксирован и используется в отчётах/диагностике).
+TERRITORIES = ("Historical", "Greater")
+
 
 # =====================================================================
 # Параметры анализа (бывшие C1)
@@ -74,6 +77,9 @@ class AnalysisConfig:
         "#5dca0c",  # 1 Sparse Vegetation
         "#ffd700",  # 2 Built-Up / Bare Soil
         "#138eff",  # 3 Water
+    ])
+    class_short: list = field(default_factory=lambda: [
+        "Dense", "Sparse", "Built", "Water",
     ])
     class_weights: Optional[dict] = None  # None → все 1.0
 
@@ -208,11 +214,19 @@ class MapConfig:
         "crs": "EPSG:32637",
         "dpi": 150,
         "figsize": (14, 9),
+        "figsize_pair": (14, 4.5),
+        "figsize_wide": (14, 5),
+        "figsize_tall": (15, 9),
+        "figsize_grid": (14, 8),
         "bbox_inches": "tight",
         "facecolor": "white",
         "font_family": "DejaVu Sans",
         "title_size": 14,
         "legend_size": 10,
+        "figure_dpi": 100,
+        "figure_figsize": (12, 6),
+        "font_size": 11,
+        "true_color_vis": {"min": 0.0, "max": 0.3, "gamma": 1.4},
     })
     plot_style: dict = field(default_factory=lambda: {
         "historical_color": "#1f77b4",
@@ -260,11 +274,41 @@ class StatsConfig:
         "oa": [(0.85, "🟢"), (0.75, "🟡"), (0.0, "🔴")],
         "kappa": [(0.80, "🟢"), (0.70, "🟡"), (0.0, "🔴")],
     })
+    f1_marks: list = field(default_factory=lambda: [
+        (0.80, "✅"), (0.60, "⚠️"), (0.0, "❌"),
+    ])
+    f1_pair_marks: list = field(default_factory=lambda: [
+        (0.80, "✅ отлично"), (0.65, "⚠️ приемлемо"), (0.0, "❌ плохо"),
+    ])
+    f1_min_ok: float = 0.60
     cumulative_columns: list = field(default_factory=lambda: [
         "territory", "year", "OA", "Kappa",
         "Dense_km2", "Sparse_km2", "BuiltUp_km2", "Water_km2",
         "n_scenes", "elapsed_sec",
     ])
+
+
+# =====================================================================
+# Параметры диагностики F1/F2 (бывшие константы diagnostics.py)
+# =====================================================================
+@dataclass
+class DiagConfig:
+    sample_points_per_class: int = 300
+    validation_seed: int = 42
+    anomaly_threshold: float = 0.1
+    trend_min_points: int = 3
+    low_coverage_pct: float = 90.0
+    coverage_ok_pct: float = 95.0
+    cloud_ref_pct: float = 20.0
+    high_cloud_pct: float = 1.0
+    ndvi_min: float = 0.3
+    ndvi_max: float = 0.8
+    ndvi_bimod_flat: float = 0.05
+    ndvi_bimod_bimodal: float = 0.10
+    min_valid_points_pct: float = 70.0
+    warn_valid_points_pct: float = 50.0
+    separability_good: float = 0.15
+    separability_warn: float = 0.05
 
 
 # =====================================================================
@@ -274,8 +318,9 @@ def build_paths(base: os.PathLike | str, analysis: AnalysisConfig,
                 create: bool = False) -> dict[str, Path]:
     """Строит словарь всех путей проекта от корня `base`.
 
-    Ключи совпадают с прототипом (PATHS): BASE/DOCS/DATA/BOUNDARIES/OUTPUT/
-    OUT_HIST/OUT_GREATER/OUT_DIFF/INTERMEDIATE/LOGS и подпапки годов.
+    Ключи: BASE/DOCS/DATA/BOUNDARIES/OUTPUT (плюс PLOTS/TABLES/MAPS)/
+    OUT_HIST/OUT_GREATER/OUT_DIFF/INTERMEDIATE (плюс DIAG)/LOGS
+    и подпапки годов.
     """
     base = Path(base)
     paths: dict[str, Path] = {
@@ -284,10 +329,14 @@ def build_paths(base: os.PathLike | str, analysis: AnalysisConfig,
         "DATA": base / "01_Data",
         "BOUNDARIES": base / "01_Data" / "Boundaries",
         "OUTPUT": base / "02_Output",
+        "PLOTS": base / "02_Output" / "plots",
+        "TABLES": base / "02_Output" / "tables",
+        "MAPS": base / "02_Output" / "maps",
         "OUT_HIST": base / "02_Output" / "Historical_Moscow",
         "OUT_GREATER": base / "02_Output" / "Greater_Moscow",
         "OUT_DIFF": base / "02_Output" / "Difference",
         "INTERMEDIATE": base / "03_Intermediate",
+        "DIAG": base / "03_Intermediate" / "diagnostics",
         "LOGS": base / "04_Logs",
     }
     for year in analysis.historical_years:
@@ -311,6 +360,7 @@ class Config:
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
     map: MapConfig = field(default_factory=MapConfig)
     stats: StatsConfig = field(default_factory=StatsConfig)
+    diag: DiagConfig = field(default_factory=DiagConfig)
     paths: dict = field(default_factory=dict)
     project_id: str = ""
     base_path: Optional[str] = None
@@ -327,6 +377,7 @@ class Config:
             analysis=analysis,
             map=MapConfig(),
             stats=StatsConfig(),
+            diag=DiagConfig(),
             paths=build_paths(base, analysis),
             project_id=project_id,
             base_path=str(base),
@@ -372,6 +423,8 @@ def load_config(path: os.PathLike | str | None = None,
             _overlay(cfg.map, data["map"])
         if "stats" in data:
             _overlay(cfg.stats, data["stats"])
+        if "diag" in data:
+            _overlay(cfg.diag, data["diag"])
 
         base_path = (data.get("paths") or {}).get("base") or cfg.base_path
         cfg.base_path = base_path

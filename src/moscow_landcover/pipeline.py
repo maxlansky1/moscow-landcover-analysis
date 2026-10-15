@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -176,13 +178,46 @@ def json_safe(obj):
     return obj
 
 
+def _git_revision() -> Optional[str]:
+    """Короткий git-хэш текущего коммита (None, если git недоступен)."""
+    try:
+        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, timeout=5)
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def run_meta() -> dict:
+    """Метаданные прогона: версия пакета, Python, git-хэш."""
+    from . import __version__
+
+    meta = {"package_version": __version__, "python": sys.version.split()[0]}
+    revision = _git_revision()
+    if revision:
+        meta["git_revision"] = revision
+    return meta
+
+
 def save_results(results: dict, failed: list, path: Path | str,
-                 run_timestamp: str = "") -> Path:
-    """Сохраняет промежуточные/итоговые результаты в JSON."""
+                 run_timestamp: str = "", meta: Optional[dict] = None) -> Path:
+    """Сохраняет промежуточные/итоговые результаты в JSON.
+
+    Если `run_timestamp` не задан — подставляется текущее время; в файл
+    добавляется блок `meta` (версия, Python, git-хэш).
+    """
+    from .logging import run_timestamp as _now
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"run_timestamp": run_timestamp, "results": json_safe(results),
-               "failed": failed}
+    payload = {
+        "run_timestamp": run_timestamp or _now(),
+        "meta": meta if meta is not None else run_meta(),
+        "results": json_safe(results),
+        "failed": failed,
+    }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
     return path
@@ -234,7 +269,7 @@ def run(cfg: Config, plan: Optional[list] = None,
             points_cache[name] = pts
             info_cache[name] = info
 
-    partial_file = paths["INTERMEDIATE"] / "h1_partial_results.json"
+    partial_file = paths["INTERMEDIATE"] / "partial_results.json"
     final_file = paths["INTERMEDIATE"] / "results_by_year.json"
 
     results_by_year = {"Historical": {}, "Greater": {}}

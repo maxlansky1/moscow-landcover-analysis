@@ -74,9 +74,6 @@ def true_color_rgb(image):
     return image.select(["red", "green", "blue"])
 
 
-TRUE_COLOR_VIS = {"min": 0.0, "max": 0.3, "gamma": 1.4}
-
-
 def save_figure(fig, output_path: Path | str,
                 map_cfg: Optional[MapConfig] = None) -> Path:
     """Сохраняет matplotlib-фигуру в PNG с настройками экспорта проекта."""

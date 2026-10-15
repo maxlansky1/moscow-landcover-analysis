@@ -27,9 +27,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7", "nbstripout"]
 
-[project.scripts]
-mlc = "moscow_landcover.cli:main"
-
 [tool.setuptools.packages.find]
 where = ["src"]
 

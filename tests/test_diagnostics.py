@@ -5,7 +5,7 @@ import pandas as pd
 
 from moscow_landcover import diagnostics
 from moscow_landcover.config import AnalysisConfig
-from moscow_landcover.report import BASELINE_11, _normalize_results
+from moscow_landcover.report import _normalize_results
 
 
 def test_build_scene_summary_empty():
@@ -83,21 +83,17 @@ def test_normalize_results_converts_area_keys():
     assert result["areas"][3] == 4.0
 
 
-def test_baseline_11_structure():
-    assert set(BASELINE_11) == {"Historical", "Greater"}
-    assert BASELINE_11["Historical"][2000]["oa"] == 0.7130
-    assert set(BASELINE_11["Greater"]) == {2013, 2019, 2026}
-
-
 def test_report_verdict_runs_on_json_loaded_results(monkeypatch):
     """summary должна переваривать results_by_year без matplotlib/GEE."""
     from moscow_landcover import report
+    from moscow_landcover.report import logging as report_logging
 
-    monkeypatch.setattr(report, "_have_matplotlib", lambda: False)
+    monkeypatch.setattr(report_logging, "have_matplotlib", lambda: False)
 
     cfg = report.Config.standard(base="/tmp/does-not-matter")
     import types
-    cfg.paths = {k: __import__("pathlib").Path("/tmp/h2") for k in ("OUTPUT", "INTERMEDIATE")}
+    cfg.paths = {k: __import__("pathlib").Path("/tmp/h2")
+                 for k in ("OUTPUT", "PLOTS", "TABLES", "INTERMEDIATE")}
 
     results = {
         "Historical": {

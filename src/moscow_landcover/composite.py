@@ -14,7 +14,7 @@ from .config import AnalysisConfig
 from .preprocess import preprocess_landsat
 
 # Индексы, вычисляемые из каналов композита (порядок важен для FEATURES).
-INDEX_NAMES = ["NDVI", "NDWI", "NDBI", "BSI", "SAVI", "NDMI", "MNDWI"]
+INDEX_NAMES = list(AnalysisConfig().index_bands)
 
 
 def _add_indices(composite):

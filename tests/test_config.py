@@ -27,6 +27,10 @@ def test_paths_contain_year_subdirs(tmp_path):
     assert paths["OUT_HIST_2000"] == tmp_path / "02_Output" / "Historical_Moscow" / "2000"
     assert paths["OUT_GREATER_2026"] == tmp_path / "02_Output" / "Greater_Moscow" / "2026"
     assert "OUT_DIFF_Historical_2000_2026" in paths
+    assert paths["PLOTS"] == tmp_path / "02_Output" / "plots"
+    assert paths["TABLES"] == tmp_path / "02_Output" / "tables"
+    assert paths["MAPS"] == tmp_path / "02_Output" / "maps"
+    assert paths["DIAG"] == tmp_path / "03_Intermediate" / "diagnostics"
 
 
 def test_build_paths_create(tmp_path):
