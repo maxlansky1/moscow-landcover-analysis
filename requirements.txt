@@ -1,0 +1,12 @@
+# Пиннинг версий для воспроизводимости в Google Colab.
+# Держать синхронно с pyproject.toml [project.dependencies].
+loguru==0.7.3
+earthengine-api==1.7.39
+geemap==0.38.8
+openpyxl==3.1.5
+pandas==2.2.3
+matplotlib==3.10.0
+numpy
+scipy
+tqdm
+PyYAML

@@ -1,0 +1,51 @@
+# Пример конфигурации проекта (безопасно коммитить).
+# Скопируйте в configs/local.yaml и укажите свои значения.
+#
+# Все значения здесь переопределяют дефолты из moscow_landcover.config.
+# Личные/секретные значения (project_id) — НЕ здесь, а через
+# переменные окружения / Colab Secrets.
+
+analysis:
+  historical_start: 2000
+  historical_end: 2026
+  greater_start: 2013
+  greater_end: 2026
+  historical_years: [2000, 2007, 2013, 2019, 2026]
+  greater_years: [2013, 2019, 2026]
+  season_start: "06-01"
+  season_end: "09-01"
+  min_images_for_composite: 3
+  fallback_offsets: [-1, 1, -2, 2]
+
+  rf_trees: 100
+  rf_min_leaf: 5
+  rf_bag_fraction: 0.5
+
+  training_source: "ESA/WorldCover/v200"
+  training_year: 2021
+  points_per_class: 2000
+  train_fraction: 0.7
+  random_seed: 42
+
+  majority_filter: true
+  filter_window: 3
+
+  accuracy_threshold: 0.85
+  kappa_threshold: 0.80
+
+  analysis_crs: "EPSG:32637"
+  display_crs: "EPSG:3857"
+
+  gee_scale: 30
+  gee_tile_scale: 4
+
+# Пути. base — корень дерева проекта (обычно папка на Google Drive).
+# Если не задан, берётся из переменной окружения MLC_PROJECT_PATH.
+paths:
+  base: "/content/drive/MyDrive/Moscow_LandCover_Analysis"
+
+# Google Earth Engine
+gee:
+  # Идентификатор GCP-проекта. Не секрет, но лучше держать в Secrets.
+  # Если пусто — берётся из переменной окружения MLC_EE_PROJECT / EE_PROJECT.
+  project_id: ""

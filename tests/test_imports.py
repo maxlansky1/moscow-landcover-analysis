@@ -1,0 +1,50 @@
+"""Импортный smoke-тест: пакет и все модули импортируются без ee/geemap."""
+from __future__ import annotations
+
+import importlib
+
+import pytest
+
+MODULES = [
+    "moscow_landcover",
+    "moscow_landcover.config",
+    "moscow_landcover.logging",
+    "moscow_landcover.gee",
+    "moscow_landcover.boundaries",
+    "moscow_landcover.preprocess",
+    "moscow_landcover.composite",
+    "moscow_landcover.points",
+    "moscow_landcover.landsat",
+    "moscow_landcover.model",
+    "moscow_landcover.stats",
+    "moscow_landcover.export",
+    "moscow_landcover.pipeline",
+    "moscow_landcover.diagnostics",
+    "moscow_landcover.report",
+    "moscow_landcover.viz",
+    "moscow_landcover.cli",
+    "moscow_landcover.experiments.hls",
+]
+
+
+@pytest.mark.parametrize("name", MODULES)
+def test_module_imports(name):
+    assert importlib.import_module(name) is not None
+
+
+def test_cli_parser_has_subcommands():
+    from moscow_landcover.cli import build_parser
+
+    parser = build_parser()
+    actions = [a for a in parser._actions if getattr(a, "choices", None)]
+    choices = set()
+    for action in actions:
+        choices |= set(action.choices)
+    assert {"run", "diagnostics", "report", "export"} <= choices
+
+
+def test_public_api_exports():
+    import moscow_landcover as m
+
+    for name in m.__all__:
+        assert hasattr(m, name)

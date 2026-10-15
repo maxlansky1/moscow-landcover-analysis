@@ -6,7 +6,17 @@
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
 
 # Local secrets (see REFACTORING.md)
 .env
@@ -14,6 +24,11 @@ configs/local.yaml
 
 # Internal draft (not published)
 HLS_APPROACH.md
+
+# Runtime output (project data tree, logs)
+02_Output/
+03_Intermediate/
+04_Logs/
 
 # OS
 .DS_Store

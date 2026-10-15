@@ -74,20 +74,25 @@ moscow-landcover-analysis/
     landsat.py              # build_collection_for_year (E7)
     model.py                # обучение классификатора, parse_feature_importance (E7, H1)
     pipeline.py             # process_year, run (H1)
-    stats.py                # статистики и сводки (C3, H2)
+    stats.py                # форматтеры, метрики, история (C3)
+    report.py               # итоговая сводка H2 + графики
     diagnostics.py          # доступность/диагностика (F1, F2)
     export.py               # экспорт классификаций (H3)
     viz.py                  # карты/графики (B3, D2, C2)
-    cli.py                  # argparse/typer: `mlc run|export|diagnostics`
+    cli.py                  # argparse: `mlc run|diagnostics|report|export`
+    experiments/
+      __init__.py
+      hls.py                # тест HLS L30 vs S30 (бывшая ячейка F/HLS)
   notebooks/
     colab_runner.ipynb      # тонкий драйвер (A2, B1–B2, запуск)
-    exploration.ipynb       # интерактив: карты/графики/проверки
-  experiments/
-    hls.py                  # вынести тест HLS (бывшая ячейка F/HLS)
+    exploration.ipynb       # интерактив: карты/графики/проверки (запланирован)
   tests/
-    test_preprocess.py
+    conftest.py             # стабы ee/geemap, общие фикстуры
     test_config.py
-    test_boundaries.py
+    test_preprocess.py
+    test_stats.py
+    test_diagnostics.py
+    test_imports.py
 ```
 
 ## 5. Маппинг ячеек ноутбука → модули
@@ -117,8 +122,8 @@ moscow-landcover-analysis/
 | F2 диагностика композитов и точек | `diagnostics.run()` |
 | F/HLS тест | `experiments/hls.py` |
 | H1 полный прогон | `pipeline.run()` |
-| H2 сводка метрик | `stats.summary()` |
-| H3 экспорт классификаций | `export.classifications()` |
+| H2 сводка метрик | `report.summary()` (детерминированные части — `stats.py`) |
+| H3 экспорт классификаций | `export.export_classifications_to_*()` |
 
 ## 6. Конфигурация и секреты
 
@@ -172,55 +177,63 @@ run(config_path='configs/local.yaml')
 
 ## 10. Фазы работ (чеклист)
 
+> **Статус.** Фазы 0–7 выполнены (единым коммитом в `main`, без ветки
+> `refactor/package` — по договорённости работали в `main`). Фаза 8 требует
+> прогона в Colab с реальным GEE: `ee`/`geemap`/`matplotlib`/`scipy` в
+> серверном окружении не установлены, поэтому локально проверены только
+> импорт, синтаксис и чистая логика (юнит-тесты).
+
 ### Фаза 0. Каркас репозитория
-- [ ] Инициализировать структуру каталогов (см. раздел 4).
-- [ ] `pyproject.toml` с зависимостями и `project.scripts = { mlc = "moscow_landcover.cli:main" }`.
-- [ ] `requirements.txt` с пиннингом; `requires-python = ">=3.10"`.
-- [ ] `.gitignore`, `LICENSE` (MIT), `README.md` (заготовка).
-- [ ] `configs/example.yaml`.
-- [ ] Сохранить `notebooks/legacy_reference.ipynb` как эталон.
+- [x] Инициализировать структуру каталогов (см. раздел 4).
+- [x] `pyproject.toml` с зависимостями и `project.scripts = { mlc = "moscow_landcover.cli:main" }`.
+- [x] `requirements.txt` с пиннингом; `requires-python = ">=3.10"`.
+- [x] `.gitignore`, `LICENSE` (MIT), `README.md`.
+- [x] `configs/example.yaml`.
+- [ ] Сохранить `notebooks/legacy_reference.ipynb` как эталон (отложено — см. раздел 9).
 
 ### Фаза 1. Инфраструктура пакета
-- [ ] `logging.py` (из A4) и `__init__.py`.
-- [ ] `config.py`: модели `AnalysisConfig`, `MapConfig`, `StatsConfig`, построение путей (A3, C1–C3).
-- [ ] `test_config.py`.
+- [x] `logging.py` (из A4) и `__init__.py`.
+- [x] `config.py`: модели `AnalysisConfig`, `MapConfig`, `StatsConfig`, построение путей (A3, C1–C3).
+- [x] `test_config.py`.
 
 ### Фаза 2. GEE и границы
-- [ ] `gee.py`: `authenticate`, `initialize`, `check` (B1–B3).
-- [ ] `boundaries.py`: загрузка GeoJSON (D1).
-- [ ] `test_boundaries.py`.
+- [x] `gee.py`: `authenticate`, `initialize`, `check` (B1–B3).
+- [x] `boundaries.py`: загрузка GeoJSON (D1).
+- [x] Тесты границ (через `test_imports.py`; отдельный `test_boundaries.py` не создан).
 
 ### Фаза 3. Предобработка и композит
-- [ ] `preprocess.py`: маски, гармонизация, калибровка (E1).
-- [ ] `composite.py`: `create_composite` (E3).
-- [ ] `test_preprocess.py`; сверка E2/E4 с эталоном.
+- [x] `preprocess.py`: маски, гармонизация, калибровка (E1).
+- [x] `composite.py`: `create_composite` (E3).
+- [x] `test_preprocess.py`; сверка E2/E4 с эталоном (отложено, см. раздел 9).
 
 ### Фаза 4. Точки, коллекции, модель
-- [ ] `points.py`: обучающие точки ESA WorldCover (E5).
-- [ ] `landsat.py`: `build_collection_for_year` (E7).
-- [ ] `model.py`: обучение классификатора, `parse_feature_importance` (E7, H1).
-- [ ] Сверка E6 с эталоном.
+- [x] `points.py`: обучающие точки ESA WorldCover (E5).
+- [x] `landsat.py`: `build_collection_for_year` (E7).
+- [x] `model.py`: обучение классификатора, `parse_feature_importance` (E7, H1).
+- [ ] Сверка E6 с эталоном (отложено, см. раздел 9).
 
 ### Фаза 5. Пайплайн, статистики, экспорт
-- [ ] `pipeline.py`: `process_year`, `run` (H1).
-- [ ] `stats.py`: сводки и метрики (C3, H2).
-- [ ] `export.py`: экспорт классификаций (H3).
+- [x] `pipeline.py`: `process_year`, `run` (H1).
+- [x] `stats.py`: форматтеры и метрики (C3) + `report.summary` (H2).
+- [x] `export.py`: экспорт классификаций (H3).
 
 ### Фаза 6. Диагностика, HLS, визуализация
-- [ ] `diagnostics.py`: доступность и диагностика (F1, F2).
-- [ ] `experiments/hls.py`: тест HLS.
-- [ ] `viz.py`: карты и графики (B3, C2, D2).
+- [x] `diagnostics.py`: доступность и диагностика (F1, F2).
+- [x] `experiments/hls.py`: тест HLS.
+- [x] `viz.py`: карты и графики (B3, C2, D2).
 
 ### Фаза 7. CLI и ноутбуки
-- [ ] `cli.py` и точка входа `mlc`.
-- [ ] `notebooks/colab_runner.ipynb` (драйвер).
-- [ ] `notebooks/exploration.ipynb` (интерактив).
-- [ ] README с инструкцией и бейджем «Open in Colab».
+- [x] `cli.py` и точка входа `mlc`.
+- [x] `notebooks/colab_runner.ipynb` (драйвер).
+- [ ] `notebooks/exploration.ipynb` (интерактив) — запланирован, не создан.
+- [x] README с инструкцией.
 
 ### Фаза 8. Финальная проверка
 - [ ] Полный прогон в Colab, сверка метрик H2 с эталоном.
 - [ ] Проверка экспорта результатов в папку на Google Диске.
 - [ ] `nbstripout --install`; удалить `legacy_reference.ipynb` из `main`.
+  (nbstripout не установлен; активный фильтр `filter=nbstripout` в
+  `.gitattributes` намеренно НЕ включён, чтобы не ломать коммиты.)
 - [ ] Тег релиза `v1.0`.
 
 ## 11. Git-процесс
