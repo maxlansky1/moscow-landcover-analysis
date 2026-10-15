@@ -17,6 +17,7 @@ from .composite import create_composite
 from .config import AnalysisConfig, Config
 from .landsat import build_collection_for_year
 from .model import parse_feature_importance, top_features, train_classifier
+from .stats import compute_accuracy_metrics
 
 
 # ---------------------------------------------------------------------
@@ -93,9 +94,10 @@ def process_year(boundary, year: int, territory_name: str,
     # ЭТАП 5: валидация + классификация
     test_classified = test.classify(classifier)
     accuracy = test_classified.errorMatrix("class", "classification")
-    oa = accuracy.accuracy().getInfo()
-    kappa = accuracy.kappa().getInfo()
+    # ОДНО getInfo: OA/Kappa считаются локально из той же матрицы, что и
+    # сохраняется, — заголовочные метрики гарантированно согласованы с ней.
     matrix = accuracy.array().getInfo()
+    oa, kappa = compute_accuracy_metrics(matrix)
     logger.info(f"[{territory_name}] Год {year}: OA={oa:.4f}, Kappa={kappa:.4f}")
     if oa < analysis.accuracy_threshold:
         logger.warning(f"[{territory_name}] Год {year}: OA ниже порога "
@@ -180,9 +182,11 @@ def json_safe(obj):
 
 def _git_revision() -> Optional[str]:
     """Короткий git-хэш текущего коммита (None, если git недоступен)."""
+    repo_root = Path(__file__).resolve().parents[2]
     try:
         out = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                             capture_output=True, text=True, timeout=5)
+                             capture_output=True, text=True, timeout=5,
+                             cwd=repo_root)
         if out.returncode == 0:
             return out.stdout.strip()
     except Exception:  # noqa: BLE001

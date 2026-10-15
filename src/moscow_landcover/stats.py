@@ -90,6 +90,24 @@ def compute_per_class_metrics(matrix, classes=None) -> dict:
     return metrics
 
 
+def compute_accuracy_metrics(matrix) -> tuple[float, float]:
+    """OA и Cohen's kappa из матрицы ошибок (matrix[i][j]: истина i, пред. j).
+
+    Считаются локально из ОДНОЙ матрицы, поэтому гарантированно согласованы
+    с ней (в отличие от отдельных серверных `errorMatrix.accuracy()/kappa()`).
+    """
+    n_total = sum(sum(row) for row in matrix)
+    if n_total == 0:
+        return 0.0, 0.0
+    n = len(matrix)
+    oa = sum(matrix[i][i] for i in range(n)) / n_total
+    row_sums = [sum(matrix[i]) for i in range(n)]
+    col_sums = [sum(matrix[i][j] for i in range(n)) for j in range(n)]
+    pe = sum(row_sums[i] * col_sums[i] for i in range(n)) / (n_total ** 2)
+    kappa = (oa - pe) / (1 - pe) if pe < 1 else 0.0
+    return oa, kappa
+
+
 def format_per_class_metrics(metrics: dict,
                              stats: Optional[StatsConfig] = None) -> str:
     """ASCII-таблица per-class метрик."""

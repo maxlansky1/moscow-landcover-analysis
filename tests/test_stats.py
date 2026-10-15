@@ -31,6 +31,21 @@ def test_compute_per_class_metrics_errors():
     assert 0 < metrics["a"]["f1"] < 1
 
 
+def test_compute_accuracy_metrics_perfect():
+    matrix = [[10, 0, 0, 0], [0, 5, 0, 0], [0, 0, 8, 0], [0, 0, 0, 2]]
+    oa, kappa = stats.compute_accuracy_metrics(matrix)
+    assert oa == 1.0
+    assert kappa == 1.0
+
+
+def test_compute_accuracy_metrics_matches_matrix():
+    # согласованность OA/Kappa с матрицей (регресс на рассинхрон в pipeline)
+    matrix = [[440, 68, 67, 9], [40, 494, 43, 4], [57, 33, 473, 9], [15, 9, 44, 540]]
+    oa, kappa = stats.compute_accuracy_metrics(matrix)
+    assert abs(oa - 1947 / 2345) < 1e-12
+    assert 0.73 < kappa < 0.79
+
+
 def test_format_areas_table_totals():
     analysis = AnalysisConfig()
     areas = {0: 100.0, 1: 50.0, 2: 25.0, 3: 25.0}

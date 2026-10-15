@@ -17,6 +17,7 @@ def train_classifier(train_samples, analysis: Optional[AnalysisConfig] = None):
         numberOfTrees=analysis.rf_trees,
         minLeafPopulation=analysis.rf_min_leaf,
         bagFraction=analysis.rf_bag_fraction,
+        seed=analysis.rf_seed,
     ).train(
         features=train_samples,
         classProperty="class",

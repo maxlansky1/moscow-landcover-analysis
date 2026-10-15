@@ -96,6 +96,7 @@ class AnalysisConfig:
     rf_trees: int = 100
     rf_min_leaf: int = 5
     rf_bag_fraction: float = 0.5
+    rf_seed: int = 0  # явный seed smileRandomForest (детерминизм обучения)
 
     # --- Обучающие данные ---
     training_source: str = "ESA/WorldCover/v200"

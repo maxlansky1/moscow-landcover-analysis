@@ -37,3 +37,13 @@ def test_public_api_exports():
 
     for name in m.__all__:
         assert hasattr(m, name)
+
+
+def test_run_meta_has_git_revision():
+    from moscow_landcover.pipeline import run_meta
+
+    meta = run_meta()
+    assert meta["package_version"]
+    assert "python" in meta
+    # в репозитории git доступен → хэш должен подставляться
+    assert meta.get("git_revision")
