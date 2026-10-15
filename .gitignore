@@ -1,0 +1,19 @@
+# Repowise local index
+.repowise/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.pyc
+
+# Local secrets (see REFACTORING.md)
+.env
+configs/local.yaml
+
+# Internal draft (not published)
+HLS_APPROACH.md
+
+# OS
+.DS_Store

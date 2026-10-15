@@ -1,0 +1,2 @@
+# Notebook diffs as text (enable nbstripout: pip install nbstripout && nbstripout --install)
+*.ipynb diff=jupyternotebook
