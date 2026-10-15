@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "moscow-landcover"
-version = "1.0.0"
+version = "1.1.0"
 description = "Анализ динамики земного покрова Москвы (2000–2026) по снимкам Landsat в Google Earth Engine"
 readme = "README.md"
 requires-python = ">=3.10"

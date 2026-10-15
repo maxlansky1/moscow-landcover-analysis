@@ -19,7 +19,7 @@ from .config import (
 )
 from .logging import get_logger, run_timestamp, setup_logging, start_run_log
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "TERRITORIES",
