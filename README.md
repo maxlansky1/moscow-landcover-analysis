@@ -23,7 +23,7 @@
 
 ```
 src/moscow_landcover/   Python-пакет (вся логика)
-experiments/            изолированные эксперименты (HLS)
+src/moscow_landcover/experiments/   изолированные эксперименты (HLS)
 notebooks/              тонкие Colab-драйверы
 configs/                example.yaml (без секретов), local.yaml (в .gitignore)
 tests/                  юнит-тесты
@@ -83,7 +83,8 @@ cfg = load_config("configs/local.yaml")
 setup_logging(cfg.paths["LOGS"])
 gee.authenticate()
 gee.initialize()
-results = run(cfg, check=False)
+results, failed = run(cfg)                       # все целевые годы
+# быстрый smoke-тест: run(cfg, plan=[("Historical", 2026)])
 ```
 
 ## Тесты
