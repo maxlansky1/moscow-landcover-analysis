@@ -6,6 +6,12 @@
 
 Репозиторий: <https://github.com/maxlansky1/moscow-landcover-analysis>
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/maxlansky1/moscow-landcover-analysis/blob/main/notebooks/colab_runner.ipynb)
+
+> ⚠️ Ноутбук открывайте **только из этого репозитория** (кнопкой выше или
+> `File → Open notebook → GitHub`). Копия «Save a copy in Drive» не обновляется
+> автоматически — именно так запускается устаревший код.
+
 ## Возможности
 
 - Два независимых временных ряда:
@@ -65,13 +71,19 @@ nbstripout --install
 
 ### Google Colab
 
+Готовый драйвер — `notebooks/colab_runner.ipynb` (открывать из GitHub, см. выше).
+Ячейка 2 ставит пакет напрямую из git, без клона:
+
 ```python
-!git clone https://github.com/maxlansky1/moscow-landcover-analysis.git
-%cd moscow-landcover-analysis
-!pip install -e .
+MLC_REF = "main"   # для воспроизводимого прогона — тег или commit hash
+!pip uninstall -y -q moscow-landcover
+!pip install -q --upgrade "moscow_landcover @ git+https://github.com/maxlansky1/moscow-landcover-analysis.git@{MLC_REF}"
 ```
 
-Готовый драйвер — `notebooks/colab_runner.ipynb`.
+- `--upgrade` обязателен: pip иначе не переустановит VCS-пакет с той же версией
+  ([pip #7678](https://github.com/pypa/pip/issues/7678)).
+- Ячейка печатает `pkg commit` (точный `commit_id` из PEP 610 `direct_url.json`),
+  который также пишется в `meta` результатов — по нему видно, какой код отработал.
 
 ## Настройка
 

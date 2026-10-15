@@ -47,3 +47,17 @@ def test_run_meta_has_git_revision():
     assert "python" in meta
     # в репозитории git доступен → хэш должен подставляться
     assert meta.get("git_revision")
+
+
+def test_git_revision_installed_first_then_repo():
+    from moscow_landcover.pipeline import (
+        _git_revision,
+        _installed_revision,
+        _repo_revision,
+    )
+
+    installed = _installed_revision()
+    # локально пакет не установлен из git → None; если установлен — короткий sha
+    assert installed is None or all(c in "0123456789abcdef" for c in installed)
+    assert _git_revision()  # в репозитории хотя бы repo-хэш
+    assert _repo_revision() or _installed_revision()

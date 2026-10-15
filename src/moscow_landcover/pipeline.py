@@ -180,8 +180,28 @@ def json_safe(obj):
     return obj
 
 
-def _git_revision() -> Optional[str]:
-    """Короткий git-хэш текущего коммита (None, если git недоступен)."""
+def _installed_revision() -> Optional[str]:
+    """Commit пакета, установленного из git (PEP 610, `direct_url.json`).
+
+    Работает и для обычной установки (`pip install git+...`), и для editable:
+    pip записывает точный `commit_id` рядом с метаданными дистрибутива.
+    """
+    try:
+        import importlib.metadata as md
+
+        dist = md.distribution("moscow-landcover")
+        direct = dist.read_text("direct_url.json")
+        if direct:
+            commit = json.loads(direct).get("vcs_info", {}).get("commit_id")
+            if commit:
+                return commit[:7]
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _repo_revision() -> Optional[str]:
+    """Короткий git-хэш локального checkout (None, если git недоступен)."""
     repo_root = Path(__file__).resolve().parents[2]
     try:
         out = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
@@ -192,6 +212,11 @@ def _git_revision() -> Optional[str]:
     except Exception:  # noqa: BLE001
         pass
     return None
+
+
+def _git_revision() -> Optional[str]:
+    """Ревизия кода: установленный из git commit, иначе хэш локального репо."""
+    return _installed_revision() or _repo_revision()
 
 
 def run_meta() -> dict:
